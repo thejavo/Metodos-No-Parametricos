@@ -99,14 +99,14 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # esperado de theta_hat, no es otro que el verdadero theta. Recordemos la definicion de varianza
     # es la esperanza de V(x) = E((x - E(x))^2) Es el promedio de las desviaciones al cuadrado entre x y su promedio
     # Ahora como theta_hat es un vector no lo puedo elevar al cuadrado. La solucion en vectores es multiplicarlo
-    # por su traspuesto, y obtendremos entonces la matriz de covarianzas V(x) = E( (x-E(x)) * (x-E(x)).T )
+    # por su traspuesto, y obtendremos entonces la matriz de covarianzas V(x) = E( (x-E(x)) * (x-E(x')) )
     # Reemplacemos theta_hat en la formula anterior.  V(theta_hat) = E( (theta_hat-E(theta_hat)) * (theta_hat-E(theta_hat)).T )
-    # Ahora recordemos que la E(theta_hat) = theta entonces  V(theta_hat) = E( (theta_hat - theta) * (theta_hat - theta).T )
-    # De aca recordamos que theta_hat - theta = (Xi.T * X)^-1 * Xi.T * Epsilon, todo esto lo reemplazamos en la ecuacion
-    # anterior y recurrimos a la propiedad de matrices que dice (A*B).T = B.T * A.T de manera que finalmente la
-    # ecuacion nos queda como  V(theta_hat) = E( (Xi.T * X)^-1 * Xi.T * Epsilon * Epsilon.T * Xi * (Xi.T * Xi)^-1 )
+    # Ahora recordemos que la E(theta_hat) = theta entonces  V(theta_hat) = E( (theta_hat - theta) * (theta_hat - theta)' )
+    # De aca recordamos que theta_hat - theta = (X' * X)^-1 * X' * Epsilon, todo esto lo reemplazamos en la ecuacion
+    # anterior y recurrimos a la propiedad de matrices que dice (A*B)' = B' * A' de manera que finalmente la
+    # ecuacion nos queda como  V(theta_hat) = E( (X' * X)^-1 * X' * Epsilon * Epsilon' * X * (X' * X)^-1 )
     # Ahora, si miramos bien, lo unico que varia realmente en la ecuacion anterio es Epsilon, o sea que para el valor
-    # esperado nos podemos quedar con el termino E( Epsilon * Epsilon.T) y el resto sacarlo fuera.
+    # esperado nos podemos quedar con el termino E( Epsilon * Epsilon') y el resto sacarlo fuera.
     # Recurrimos ahora a dos supuestos "fuertes", que es decir que las observaciones son todas independientes entre si,
     # y si esto es verdad la covarianza entre dos Errores (Epsilon) de dos observaciones cualesquiera tiene un valor
     # esperado de 0. Y la otra suposicion "fuerte" es que todos los errores son identicamente distribuidos y por tanto
@@ -115,9 +115,9 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # Extiendo un poco mas, Un error tiene una volatilidad determinada por su varianza en un dia determinado, pero esa
     # volatilidad no covaria con los errores de cualquiera de los otros dias. A si que de vuelta, Existe una varianza de Epsilon
     # Pero la covarianza entre los distintos epsilon es 0.
-    # Si todo esto es asi, entonces nuestro termino E ( Epsilon * Epsilon.T ) = Var(Epsilon) * Matriz_identidad y si ahora
+    # Si todo esto es asi, entonces nuestro termino E ( Epsilon * Epsilon' ) = Var(Epsilon) * Matriz_identidad y si ahora
     # reemplazo esto en la ecuacion anterior veremos que podemos simplificar muchas cosas y finalmente llegaremos a:
-    # VAR_theta_hat = ( X.T * X )^-1 * Var(e)
+    # VAR_theta_hat = ( X' * X )^-1 * Var(e)
     # Nota al margen. La Var(e) determina la amplitud de los errores de la muestra, lo que queremos es una amplitud baja
     # de forma tal de mejorar nuestras estimaciones. Por otro lado la Var(x), queremos que sea lo mas grande posible, a
     # fin de mejorar tambien nuestras estimaciones. Recordar el ejemplo balistico, queremos un caños finito (Var(e)) y
@@ -131,20 +131,34 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # Var(e_hat) = 1/L1-2 * Sum(e_hat^2), donde L1 es la cantidad de datos en la ventana de estimacion. Sacamos 2
     # grados de libertad, porque estamos estimando 2 datos, alfa y Beta. Esta es la manera de obtener un estimador
     # insesgado de la varianza. Es decir, nuestra regresion tiene dos variables explicativas, si tuviera mas, deberiamos
-    # restarlas
+    # restarlas. La intuicion detras de esto es que, nuestro promedio sera un valor mas "grande" dado que dividiremos por
+    # un N mas chico, lo que finalmente nos dara un valor mayor de varianza atendiendo a que nuestras variables
+    # independientes son menos (hay 2, en este caso, que dependen del resto).
+    # Terminando con la ecuacion qu enos convoca, y dado que los e_hat son vectores y que no puedo elevar vectores
+    # al cuadraddo, nuestra ecuacion final de la varianza de los theta sombrero queda de la siguiente forma
+    # VAR_theta_hat = (x' * x) ^ -1 * (1 / L1-2) * e_hat' * e_hat
 
     e = (est_window['e_hat'].values).reshape(-1, 1)
-    DVO_e_hat = (1 / (len(est_window) - 2) * (e.T @ e))[0][0]
+    VAR_e_hat = (1 / (len(est_window) - 2) * (e.T @ e))[0][0]
     # ESP_e_hat = np.mean(est_window['e_hat'])
-    VAR_theta_hat = np.linalg.inv(X.T @ X) * DVO_e_hat
+    VAR_theta_hat = np.linalg.inv(X.T @ X) * VAR_e_hat
+
+    # Con nuestras 4 ecuaciones (theta_hat, Rm_hat, e_hat y Var(e_hat)) nos vamos a nuestra ventana del evento
+    # y ahi deberemos obtener nuestro retornos anormales. La unica diferencia, con lo que hicimos antes
+    # es que nusetro e_hat_star = Ri_star - X_star * theta_hat --> este ultimo viene del calculo
+    # de la ventana de estimacion. star hace referencia a la ventana del evento.
 
     # Event Window
+
+    # Dado que no voy a calcular un theta_star, sino que voy a utilizar el theta_hat, entonces no me hace
+    # falta crear una matriz X_star.
+
     evt_window['Ticker'] = tickers[i]
     evt_window['L'] = 2
     evt_window['Rm'] = theta_hat[0][0] + evt_window['^GSPC'] * theta_hat[1][0]  # usamos el theta de la estimation window
     evt_window['e_hat'] = evt_window[tickers[i]] - evt_window['Rm']
 
-    S0 = k * DVO_e_hat  # --------------->  PARA SHOCK
+    S0 = k * VAR_e_hat  # --------------->  PARA SHOCK
     evt_window['e_hat'] += S0 * np.exp(-Lambda * evt_window.index)
 
     #FUNCION DE SHOCK tiene la forma S0 * e^-lambda * t . lambda es la constante de atenuacion.
