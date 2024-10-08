@@ -97,7 +97,7 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # ahora, dado que nuestro theta_hat depende de la muestra que tomemos, entonces nuestro theta_hat
     # tambien tiene un error intrinseco y lo mediremos a traves de su varianza VAR_theta_hat. El valor
     # esperado de theta_hat, no es otro que el verdadero theta. Recordemos la definicion de varianza
-    # es la esperanza de V(x) = E((x - E(x))²) Es el promedio de las desviaciones al cuadrado entre x y su promedio
+    # es la esperanza de V(X) = E((X - E(X))²) Es el promedio de las desviaciones al cuadrado entre x y su promedio
     # Ahora como theta_hat es un vector no lo puedo elevar al cuadrado. La solucion en vectores es multiplicarlo
     # por su traspuesto, y obtendremos entonces la matriz de covarianzas V(x) = E( (x-E(x)) * (x-E(x')) )
     # Reemplacemos theta_hat en la formula anterior.  V(theta_hat) = E( (theta_hat-E(theta_hat)) * (theta_hat-E(theta_hat)).T )
@@ -118,17 +118,17 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # Si todo esto es asi, entonces nuestro termino E ( Epsilon * Epsilon' ) = Var(Epsilon) * Matriz_identidad y si ahora
     # reemplazo esto en la ecuacion anterior veremos que podemos simplificar muchas cosas y finalmente llegaremos a:
     # VAR_theta_hat = ( X' * X )⁻¹ * Var(e)
-    # Nota al margen. La Var(e) determina la amplitud de los errores de la muestra, lo que queremos es una amplitud baja
-    # de forma tal de mejorar nuestras estimaciones. Por otro lado la Var(x), queremos que sea lo mas grande posible, a
-    # fin de mejorar tambien nuestras estimaciones. Recordar el ejemplo balistico, queremos un caños finito (Var(e)) y
-    # largo (Var(x)) a fin de lograr estimaciones mas precisas.
+    # Nota al margen. La Var(e_hat) determina la amplitud de los errores de la muestra, lo que queremos es una amplitud baja
+    # de forma tal de mejorar nuestras estimaciones. Por otro lado la Var(X), queremos que sea lo mas grande posible, a
+    # fin de mejorar tambien nuestras estimaciones. Recordar el ejemplo balistico, queremos un caños finito (Var(e_hat)) y
+    # largo (Var(X)) a fin de lograr estimaciones mas precisas.
 
     # ver libro econometria de tibshirani
 
     # Volvemos a nuestra ecuacion de VAR_theta_hat. Nos falta obtener un valor de la Var(e)
     # No conocemos la distribucion de los verdaderos errores, pero si tenemos nuestros errores estimados
     # con lo que vamos a decir que nuestro mejor estimador de la Var(e) es la Var(e_hat) y esto es igual a
-    # Var(e_hat) = 1/L1-2 * Sum(e_hat^2), donde L1 es la cantidad de datos en la ventana de estimacion. Sacamos 2
+    # Var(e_hat) = 1/L1-2 * Sum(e_hat)^2, donde L1 es la cantidad de datos en la ventana de estimacion. Sacamos 2
     # grados de libertad, porque estamos estimando 2 datos, alfa y Beta. Esta es la manera de obtener un estimador
     # insesgado de la varianza. Es decir, nuestra regresion tiene dos variables explicativas, si tuviera mas, deberiamos
     # restarlas. La intuicion detras de esto es que, nuestro promedio sera un valor mas "grande" dado que dividiremos por
@@ -139,7 +139,7 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # VAR_theta_hat = (x' * x) ^ -1 * (1 / L1-2) * e_hat' * e_hat
 
     e = est_window['e_hat'].values
-    VAR_e_hat = (1 / (L1 - 2) * (e.T @ e))
+    VAR_e_hat = (1 / (L1 - 2)) * (e.T @ e)
     ESP_e_hat = np.mean(est_window['e_hat'])
     VAR_theta_hat = np.linalg.inv(X.T @ X) * VAR_e_hat
 
@@ -258,10 +258,34 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # activos (across events). La idea de "agregar" o "acumular" los retornos anoramales a lo largo de una ventana temporal
     # es ver si el efecto acumulado del evento se destaca por sobre el "ruido" que esperamos se netee.
     # Estos retornos agregados temporalmente se llaman CAR (Cumulative Abnormal Returns) estos los vamos a calcular como
-    # el produtco de CAR = gamma' * e_hat_star, donde gamma es un vector formado por ceros y unos, y los unos estaran
+    # el produtco de CAR_hat = gamma' * e_hat_star, donde gamma es un vector formado por ceros y unos, y los unos estaran
     # en los dias en que queremos "acumular" retornos.
 
-    evt_window['car'] = gamma @ evt_window['e_hat'].values
+    evt_window['car_hat'] = gamma @ evt_window['e_hat'].values
+
+    # Como vimos anteriormente la E(e_hat_star) = 0, asi que la E(CAR_hat) = gamma.T * E(e_hat_star) con lo cual tambien es
+    # 0. Ahora en cuanto a la Var(CAR_hat) = E(CAR_hat * CAR_hat') = E[gamma.T * e_hat_star * e_hat_star' * gamma],
+    # e_hat_star * e_hat_star' es la Var de los retornos anormales asi que
+
+    # Var(CAR_hat) = gammma.T * Var(e_hat_star) * gamma.
+
+    # Si los e_hat_star se distribuian como una Normal multivariada de media 0 y Varianza Var(e_hat_star) entonces
+    # los CAR_hat seran Normales univariados (se trata solo de un numero) con media 0 y Var gamma.T * Var(e_hat_star) * gamma
+    # Vamos a dar paso entonces a los SCAR que son los Standarized Cumulative Abnormal Returns donde dada la distribucion
+    # que encontramos diremos que:
+
+    # SCAR_hat = (CAR_hat - 0) / SQRT(Var(CAR_hat))
+    # SCAR_hat = gamma.T * e_hat_star / SQRT ( gamma.T * Var(e_hat_star) * gamma)
+
+    # pero dado que el desvio standard por el que estamos dividiendo, no es el "verdadero" desvio, es uno estimado
+    # encontramos que estos SCAR_hat se distribuyen como una t de student con L1-2 grados de libertad. y aqui
+    # termina la primer parte de nuestro estudio de eventos. Si solo tuviesemos 1 compañia para estudiar sus retornos,
+    # solo tendriamos un SCAR. Buscaremos cual es el valor critico para un 5%, 1% etc de probabilidad de cometer error
+    # de tipo 1 en una t de student con L1 - 2 grados de libertad y si nuestro SCARY cae por debajo de ese valor critico
+    # entonces rechazaremos H0 y diremos que el evento si tuvo impacto. Por otro lado, si probamos otros activos y no
+    # rechazamos H0 el 1% de las veces (lo que seria esperable por diseño), entonces tambien podriamos rechazar H0 y
+    # decir que el evento SI tuvo impacto.
+
 
     S0 = k * VAR_e_hat  # --------------->  PARA SHOCK
     evt_window['e_hat'] += S0 * np.exp(-Lambda * evt_window.index)
