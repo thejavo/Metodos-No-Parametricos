@@ -286,6 +286,16 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # rechazamos H0 el 1% de las veces (lo que seria esperable por diseño), entonces tambien podriamos rechazar H0 y
     # decir que el evento SI tuvo impacto.
 
+    # Dado que los SCARi son t de student su varianza sera Var(SCARi) = (L1-2)/(L1-4). Recordemos que cada SCARi
+    # va a estar identicamente distribuido con el resto, todos van a ser t de student (L1-2) y dado que los aviones
+    # no se ponen de acuerdo para caerse todos juntos tambien seran independientes.
+    # Con todos estos SCARi podemos obtener el SCAR_prom = 1/N * suma(SCARi) y si queremos estandarizar el valor SCAR_prom
+    # La Var(SCAR_prom) = 1/N² * SUMA(Var(SCARi) => Var(SCAR_prom) = ! 1:28:10
+    # entonces le restamos su esperanza y lo dividimos por su desvio standard sobre raiz de N (numero de eventos)
+    # y obtenemos nuestro primer estadistico J, en particular J2.
+
+    # J2 = SQRT(N) * SCARi_prom / SQRT(L1-2/L1-4) que se distribuye como una Normal(0,1)
+
 
     S0 = k * VAR_e_hat  # --------------->  PARA SHOCK
     evt_window['e_hat'] += S0 * np.exp(-Lambda * evt_window.index)
