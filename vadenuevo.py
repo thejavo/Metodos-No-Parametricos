@@ -81,7 +81,7 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
 
     # MARKET MODEL - estimation window (Ri = alpha + Beta.Rm)
 
-    # Calcular los parámetros alfa y beta usando la fórmula de MCO: (X'X)^(-1) * X'Y
+    # Calcular los parámetros alfa y beta usando la fórmula de MCO: (X'X)⁻¹ * X'Y
     # al vector de que tiene alfa y Beta lo llamaremos theta_hat
     theta_hat = np.linalg.inv(X.T @ X) @ X.T @ Y
 
@@ -157,6 +157,14 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # anormales, que desconocemos y (theta - theta_hat) nos indica que tendremos un error en la "herramienta de medicion"
     # dado que no conocemos el verdadero theta, y todo lo que tenemos es el theta_hat que logramos armar en nuestra
     # ventana de estimación.
+
+    X_star = np.column_stack((np.ones(L2), evt_window['^GSPC'].values))
+
+    evt_window['Ticker'] = tickers[i]
+    evt_window['L'] = 2
+    evt_window['Rm'] = theta_hat[0][0] + evt_window['^GSPC'] * theta_hat[1][0]  # usamos el theta de la estimation window
+    evt_window['e_hat_star'] = evt_window[tickers[i]] - evt_window['Rm']
+    evt_window['e_hat_star2'] = np.array(evt_window[tickers[i]]) - (X_star @ theta_hat).reshape(-1)
 
     # Nos va a interesar conocer entonces la E(e_hat_star) y la VAR(e_hat_star)
     # E(e_hat_star) = E(E_star) + X_star * E(theta-theta_hat). Bajo H0, la E(E_star) deberia ser 0. Es decir, el evento
@@ -238,12 +246,7 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # la medicion?, obviamente cuando L1 sea mucho mas grande que L2.
     #
 
-    X_star = np.column_stack((np.ones(L2), evt_window['^GSPC'].values))
 
-    evt_window['Ticker'] = tickers[i]
-    evt_window['L'] = 2
-    evt_window['Rm'] = theta_hat[0][0] + evt_window['^GSPC'] * theta_hat[1][0]  # usamos el theta de la estimation window
-    evt_window['e_hat'] = evt_window[tickers[i]] - evt_window['Rm']
 
     print(VAR_e_hat.shape)
     print((np.ones(L2).reshape(-1, 1)).shape)
@@ -268,6 +271,8 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # e_hat_star * e_hat_star' es la Var de los retornos anormales asi que
 
     # Var(CAR_hat) = gammma.T * Var(e_hat_star) * gamma.
+
+    VAR_CAR_hat = gamma.T @ VAR_e_hat_star @ gamma
 
     # Si los e_hat_star se distribuian como una Normal multivariada de media 0 y Varianza Var(e_hat_star) entonces
     # los CAR_hat seran Normales univariados (se trata solo de un numero) con media 0 y Var gamma.T * Var(e_hat_star) * gamma
@@ -295,6 +300,32 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # y obtenemos nuestro primer estadistico J, en particular J2.
 
     # J2 = SQRT(N) * SCARi_prom / SQRT(L1-2/L1-4) que se distribuye como una Normal(0,1)
+
+    # Vamos ahora con el segundo estadístico paramétrico J1.
+    # La diferencia fundamental es que la agregación es across events. Seguimos calculando normalmente los abnormal returns
+    # para cada activo, y ahora los vamos a promediar para cada dia en la ventana del evento y luego los agregaremos via
+    # gamma. Entonces, ae(across events) e_star_ae_prom = 1/N (numero de activos) * Suma(e_hat_star) para cada dia de L2
+    # CAR_prom = gamma' * e_star_ae_prom (este ultimo sera un vector de L2 x 1), con lo que nuestro CAR_prom vuelve a
+    # ser un escalar. Podemos entonces calcular su varianza Var(CAR_prom) = gamma' * Var(e_star_ae_prom) * gamma
+    # recordar que Var(e_star_ae_prom) va a ser una matriz de L2 x L2 y por tanto
+    # Var(e_star_ae_prom) = (1 / N²) * Suma(Var(e_hat_star))  y esta ultima ya la calculamos
+    # Var(e_hat_star) = VAR(e_hat) * (matriz_identidad(L2) + X_star * (X' * X)⁻¹ * X_star')
+    # Nos queda entonces algo como esto:
+
+    # Var(e_star_ae_prom) = (1/N²) * Suma( VAR(e_hat) * (matriz_identidad(L2) + X_star * (X' * X)⁻¹ * X_star'))
+
+    # y finalmente, para calcular la Var(CAR_prom)
+
+    # Var(CAR_prom) = gamma' * ((1/N²) * Suma( VAR(e_hat) * (matriz_identidad(L2) + X_star * (X' * X)⁻¹ * X_star'))) * gamma
+
+    # Finalmente, estandarizaremos este numero ( numero - esperanza(numero) ) / desvio_std(numero) y esto sera nuestro
+    # estadistico J1.
+
+    # J1 = (CAR_prom - 0) / SQRT(Var(CAR_prom) =>
+    # J1 = gamma' * e_star_ae_prom / SQRT( gamma' * Var(e_star_ae_prom) * gamma ) =>
+    # J1 = gamma' * e_star_ae_prom / SQRT( gamma' * ((1/N²) * Suma( VAR(e_hat) * (matriz_identidad(L2) + X_star * (X' * X)⁻¹ * X_star'))) * gamma )
+
+    # y esto se distribuye como N(0,1), ya que venimos de varias agregaciones y estas responden al TCL
 
 
     S0 = k * VAR_e_hat  # --------------->  PARA SHOCK
