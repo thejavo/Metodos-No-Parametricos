@@ -44,7 +44,7 @@ def gettickerinfo(tickers: list, archivo="tickers.csv") -> pd.DataFrame:
 def getTickers(archivo = 'tickers.csv',group = 'GSPC') -> list:
     respuesta: list = []
     if os.path.exists(archivo):
-        respuesta = pd.read_csv(archivo)['Ticker'].tolist()
+        respuesta = pd.read_csv(archivo, delimiter=";")['Ticker'].tolist()
     else:
         if group == 'GSPC':
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
@@ -84,7 +84,7 @@ def guardainfo(df: pd.DataFrame, archivoname, ind = False):
 
 #--- PARAMETROS DE LA APLICACION ---
 fecha_dde = datetime(2019, 1, 1)
-fecha_hta = datetime(2024, 1, 1)
+fecha_hta = datetime(2024, 8, 31)
 #--- FIN PARAMETROS DE LA APLICACION ---
 
 tickers = []

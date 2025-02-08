@@ -16,7 +16,7 @@ def vectorgamma(largo, unos):
 
 #--- PARAMETROS DE LA APLICACION ---
 
-fecha_evento=datetime(2020, 6, 8)
+fecha_evento=pd.to_datetime("2020-06-08")
 L1 = 101
 gap_estimacion_evento = 10
 pre_evento = 3
@@ -28,6 +28,18 @@ q_de_gammas = 3
 k = 0.5       # 0,5 - 1 -  2
 Lambda = 0.1  # 0,1 - 1 - 10
 #--- FIN PARAMETROS DE LA APLICACION ---
+
+
+resultados = {
+    'theta_hat': {},         # Diccionario para guardar alfa y beta de cada activo
+    'var_e_hat': {},         # varianzas de retornos anormales ventana de estimacion
+    'covarianza_evento': {}, # matrices de covarianza
+    'car': {},               # Cumulative Abnormal Returns
+    'var_car': {},           # Varianza CAR
+    'scar': [],              # SCAR
+    'J1': {},                # Diccionario para estadístico J1
+    'J2': {},                # Diccionario para estadístico J2
+ }
 
 nivel_confianza = 0.05
 
@@ -44,6 +56,7 @@ valor_critico_n2 = stats.norm.ppf(nivel_confianza_2)
 
 if os.path.exists('precios.csv'):
     precios = pd.read_csv('precios.csv', index_col='Date', parse_dates=['Date'])
+    precios.index = precios.index.tz_localize(None)
 else:
     sys.exit("Falta el archivo precios.csv")
 
@@ -65,19 +78,28 @@ fecha_finestudio = retornos.index[indice_fecha_evento + L2 - 1]
 del precios
 
 gamma = vectorgamma(L2, q_de_gammas)
-scar_aux, J1, J2, ZR, GS = [], [], [], [], []
 
-for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
+# Crear dataframes vacíos para retornos anormales y CAR, utilizando índices derivados de retornos
+AR_est = pd.DataFrame(index=retornos.loc[fecha_estimacion:fecha_finestimacion].index)  # Fechas de estimación
+AR_evt = pd.DataFrame(index=retornos.loc[fecha_evento:fecha_finestudio].index)  # Fechas de evento
+CAR_evt = {}
+
+# Diccionario para guardar varianzas y matrices de covarianza
+var_AR_est = {}
+cov_matrix = {}
+
+
+for ticker in tickers[:-1]:  # range hasta la penúltima columna
 
     # Datos de retornos del evento.
-    est_window = retornos.loc[fecha_estimacion:fecha_finestimacion, ['^GSPC', tickers[i]]].reset_index()
-    evt_window = retornos.loc[fecha_evento:fecha_finestudio, ['^GSPC', tickers[i]]].reset_index()
+    est_window = retornos.loc[fecha_estimacion:fecha_finestimacion, ['^GSPC', ticker]].reset_index()
+    evt_window = retornos.loc[fecha_evento:fecha_finestudio, ['^GSPC', ticker]].reset_index()
 
     # Matriz X con una columna de unos (para el término constante alfa) y los retornos del mercado
     X = np.column_stack((np.ones(L1), est_window['^GSPC'].values))
 
     # Vector Y con los retornos del activo
-    Y = np.array(est_window[tickers[i]].values).reshape(-1, 1)  # <--- lo transformamos en un vector columna
+    Y = np.array(est_window[ticker].values).reshape(-1, 1)  # <--- lo transformamos en un vector columna
 
     # MARKET MODEL - estimation window (Ri = alpha + Beta.Rm)
 
@@ -85,14 +107,16 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # al vector de que tiene alfa y Beta lo llamaremos theta_hat
     theta_hat = np.linalg.inv(X.T @ X) @ X.T @ Y
 
-    est_window['Ticker'] = tickers[i]
-    est_window['L'] = 1
+    resultados['theta_hat'][ticker] = theta_hat
+
     # Dado que tenemos el theta_hat, podemos sacar los Retornos estimados Rm_hat = alfa + Beta * Rm
     est_window['Rm_hat'] = theta_hat[0][0] + est_window['^GSPC'] * theta_hat[1][0]
 
     # Si ahora a nuestros Rm_hat estimados les restamos los retornos reales que ocurrieron obtendremos
     # un estimador de nuestros desperdicios e_hat, o, lo que llamamos abnormal returns
-    est_window['e_hat'] = est_window[tickers[i]] - est_window['Rm_hat']
+    est_window['e_hat'] = est_window[ticker] - est_window['Rm_hat']
+
+    AR_est[ticker] = est_window['e_hat'].values
 
     # ahora, dado que nuestro theta_hat depende de la muestra que tomemos, entonces nuestro theta_hat
     # tambien tiene un error intrinseco y lo mediremos a traves de su varianza VAR_theta_hat. El valor
@@ -136,12 +160,13 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # independientes son menos (hay 2, en este caso, que dependen del resto).
     # Terminando con la ecuacion qu enos convoca, y dado que los e_hat son vectores y que no puedo elevar vectores
     # al cuadraddo, nuestra ecuacion final de la varianza de los theta sombrero queda de la siguiente forma
-    # VAR_theta_hat = (x' * x) ^ -1 * (1 / L1-2) * e_hat' * e_hat
+    # VAR_theta_hat = (x' * x) ^ -1 * (1 / L1-2) * e_hat' * e_hat - renombrada a cov_matrix[ticker]
 
     e = est_window['e_hat'].values
-    VAR_e_hat = (1 / (L1 - 2)) * (e.T @ e)
-    ESP_e_hat = np.mean(est_window['e_hat'])
-    VAR_theta_hat = np.linalg.inv(X.T @ X) * VAR_e_hat
+    var_AR_est[ticker] = (1 / (L1 - 2)) * (e.T @ e)
+
+    ESP_e_hat = np.mean(e)
+    cov_matrix[ticker] = np.linalg.inv(X.T @ X) * var_AR_est[ticker]
 
     # Event Window
 
@@ -160,11 +185,15 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
 
     X_star = np.column_stack((np.ones(L2), evt_window['^GSPC'].values))
 
-    evt_window['Ticker'] = tickers[i]
-    evt_window['L'] = 2
     evt_window['Rm'] = theta_hat[0][0] + evt_window['^GSPC'] * theta_hat[1][0]  # usamos el theta de la estimation window
-    evt_window['e_hat_star'] = evt_window[tickers[i]] - evt_window['Rm']
-    evt_window['e_hat_star2'] = np.array(evt_window[tickers[i]]) - (X_star @ theta_hat).reshape(-1)
+
+    # Guardar retornos anormales en la ventana del evento
+    AR_evt[ticker] = evt_window[ticker] - evt_window['Rm']
+    #AR_evt[ticker] = np.array(evt_window[tickers[i]]) - (X_star @ theta_hat).reshape(-1)
+
+    # Calcular CAR acumulado en la ventana del evento
+    CAR_evt[ticker] = AR_evt[ticker].sum()
+
 
     # Nos va a interesar conocer entonces la E(e_hat_star) y la VAR(e_hat_star)
     # E(e_hat_star) = E(E_star) + X_star * E(theta-theta_hat). Bajo H0, la E(E_star) deberia ser 0. Es decir, el evento
@@ -246,14 +275,12 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # la medicion?, obviamente cuando L1 sea mucho mas grande que L2.
     #
 
-
-
-    print(VAR_e_hat.shape)
+    print(var_AR_est.shape)
     print((np.ones(L2).reshape(-1, 1)).shape)
     print(X_star.shape)
     print((X_star @ np.linalg.inv(X.T @ X) @ X_star.T).shape)
 
-    VAR_e_hat_star = VAR_e_hat * (np.ones(L2).reshape(-1, 1) + X_star @ np.linalg.inv(X.T @ X) @ X_star.T)
+    var_AR_evt = var_AR_est * (np.ones(L2).reshape(-1, 1) + X_star @ np.linalg.inv(X.T @ X) @ X_star.T)
 
     # Ahora, bajo H0, vamos a decir que los e_hat_star se distribuyen como una Normal multivariada de media 0 y
     # varianza VAR_e_hat_star. Vamos a plantear los primeros test de hipotesis y para ello vamos a agrupar, agregar, los
@@ -264,7 +291,7 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
     # el produtco de CAR_hat = gamma' * e_hat_star, donde gamma es un vector formado por ceros y unos, y los unos estaran
     # en los dias en que queremos "acumular" retornos.
 
-    evt_window['car_hat'] = gamma @ evt_window['e_hat'].values
+    resultados['car'][ticker] = (gamma.T @ evt_window['e_hat_star'].values.reshape(-1, 1))[0,0]
 
     # Como vimos anteriormente la E(e_hat_star) = 0, asi que la E(CAR_hat) = gamma.T * E(e_hat_star) con lo cual tambien es
     # 0. Ahora en cuanto a la Var(CAR_hat) = E(CAR_hat * CAR_hat') = E[gamma.T * e_hat_star * e_hat_star' * gamma],
@@ -272,7 +299,7 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
 
     # Var(CAR_hat) = gammma.T * Var(e_hat_star) * gamma.
 
-    VAR_CAR_hat = gamma.T @ VAR_e_hat_star @ gamma
+    resultados['var_car'][ticker] = (gamma.T @ var_AR_evt @ gamma)[0,0]
 
     # Si los e_hat_star se distribuian como una Normal multivariada de media 0 y Varianza Var(e_hat_star) entonces
     # los CAR_hat seran Normales univariados (se trata solo de un numero) con media 0 y Var gamma.T * Var(e_hat_star) * gamma
@@ -281,6 +308,8 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
 
     # SCAR_hat = (CAR_hat - 0) / SQRT(Var(CAR_hat))
     # SCAR_hat = gamma.T * e_hat_star / SQRT ( gamma.T * Var(e_hat_star) * gamma)
+
+    resultados['scar'].append(resultados['car'][ticker] / (resultados['var_car'][ticker])**0.5)
 
     # pero dado que el desvio standard por el que estamos dividiendo, no es el "verdadero" desvio, es uno estimado
     # encontramos que estos SCAR_hat se distribuyen como una t de student con L1-2 grados de libertad. y aqui
@@ -327,13 +356,45 @@ for i in range(retornos.shape[1] - 1):  # range hasta la penúltima columna
 
     # y esto se distribuye como N(0,1), ya que venimos de varias agregaciones y estas responden al TCL
 
+# Promedio y varianza de SCAR (J2)
+SCAR_promedio = np.mean(resultados['scar'])
+SCAR_varianza = (L1 - 2) / (L1 - 4)  # Varianza teórica bajo t de Student
 
-    S0 = k * VAR_e_hat  # --------------->  PARA SHOCK
-    evt_window['e_hat'] += S0 * np.exp(-Lambda * evt_window.index)
+# Estadístico J2
+N = len(resultados['scar'])  # Número de activos
+J2 = np.sqrt(N) * SCAR_promedio / np.sqrt(SCAR_varianza)
 
-    #FUNCION DE SHOCK tiene la forma S0 * e^-lambda * t . lambda es la constante de atenuacion.
-    # donde S0 es funcion del desvio std multiplicado por un factor k
-    # S0 = k * sigma, k toma por lo general valores (0.1, 0.5, 1, 2)
-    # que pasa si lambda es 0? entonces S0 se transforma en un shock permanente k * sigma.
-    # De esto se concluye que cuanto mas alto sea k y mas bajo sea lambda, mas facilmente
-    # se podra detectar el efecto del evento.
+# Resultados de J2
+print(f"Estadístico J2: {J2}")
+print(f"Nivel de significancia 5% (Normal estándar): {stats.norm.ppf(1 - 0.05)}")
+
+# Cálculo del CAR promedio por día (para J1)
+CAR_por_dia = np.zeros(L2)  # Acumular retornos anormales por día
+for ticker in tickers[:-1]:
+    e_hat_star = resultados['car'][ticker]
+    CAR_por_dia += e_hat_star
+
+# Promedio de retornos anormales por día (across assets)
+CAR_promedio_por_dia = CAR_por_dia / N
+
+# Varianza del CAR promedio por día
+var_CAR_promedio_por_dia = (1 / N ** 2) * np.sum([
+    resultados['var_car'][ticker] for ticker in tickers[:-1]
+])
+
+# Estadístico J1
+J1 = gamma.T @ CAR_promedio_por_dia / np.sqrt(gamma.T @ var_CAR_promedio_por_dia @ gamma)
+
+# Resultados de J1
+print(f"Estadístico J1: {J1}")
+print(f"Nivel de significancia 5% (Normal estándar): {stats.norm.ppf(1 - 0.05)}")
+
+S0 = k * var_AR_est  # --------------->  PARA SHOCK
+evt_window['e_hat'] += S0 * np.exp(-Lambda * evt_window.index)
+
+#FUNCION DE SHOCK tiene la forma S0 * e^-lambda * t . lambda es la constante de atenuacion.
+# donde S0 es funcion del desvio std multiplicado por un factor k
+# S0 = k * sigma, k toma por lo general valores (0.1, 0.5, 1, 2)
+# que pasa si lambda es 0? entonces S0 se transforma en un shock permanente k * sigma.
+# De esto se concluye que cuanto mas alto sea k y mas bajo sea lambda, mas facilmente
+# se podra detectar el efecto del evento.
