@@ -1,16 +1,11 @@
 import yfinance as yf
-import numpy as np
-from datetime import datetime, timedelta
-#import random
+from datetime import datetime
 import pandas as pd
 import os
 import requests
 from io import BytesIO
-#import matplotlib.pyplot as plt
-import scipy.stats as stats
 import sys
 import warnings
-#from colorama import Fore, Style
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 pd.set_option('display.width', None)
@@ -39,7 +34,6 @@ def gettickerinfo(tickers: list, archivo="tickers.csv") -> pd.DataFrame:
     tickers_df.to_csv(archivo, index=False)
 
     return tickers_df
-
 
 def getTickers(archivo = 'tickers.csv',group = 'GSPC') -> list:
     respuesta: list = []
@@ -85,18 +79,18 @@ def guardainfo(df: pd.DataFrame, archivoname, ind = False):
 #--- PARAMETROS DE LA APLICACION ---
 fecha_dde = datetime(2019, 1, 1)
 fecha_hta = datetime(2024, 8, 31)
-#--- FIN PARAMETROS DE LA APLICACION ---
+marketbenchmark = '^MERV'
+archivo = 'tickersBA.csv'
 
-tickers = []
+#--- FIN PARAMETROS DE LA APLICACION ---
 
 date_range = pd.date_range(start=fecha_dde, end=fecha_hta)
 precios = pd.DataFrame()
-precios_tmp = pd.DataFrame()
 
-tickers = ['^GSPC']
-tickers.extend(getTickers(archivo='tickerstesis.csv'))
+tickers = [marketbenchmark]
+tickers.extend(getTickers(archivo=archivo))
 
-precios_tmp = yf.download(tickers=tickers, start=fecha_dde, end=fecha_hta, progress=False)['Adj Close']
+precios_tmp = yf.download(tickers=tickers, start=fecha_dde, end=fecha_hta, progress=True)#['Close']
 if isinstance(precios_tmp, pd.Series):
     precios_tmp = precios_tmp.to_frame().rename(columns={'Adj Close': tickers[0]})
 
@@ -107,18 +101,6 @@ elif precios_tmp.index.equals(precios.index):
     precios = precios.join(precios_tmp[precios_tmp.columns.difference(precios.columns)], sort=True)
 
 # guardamos los precios obtenidos en un .csv y los tickers con problemas en otro.
-precios.to_csv('precios.csv', index=True)
-
-
-retornos = (np.log(precios / precios.shift(1))).iloc[1:]
-
-# marco el dataframe de precios, que es muy grande y ya no es necesario, para liberar memoria
-del precios
-del precios_tmp
-
-tickers = retornos.columns.tolist()
-tickerswospy = [t for t in tickers if t != '^GSPC']
-tickers_df = gettickerinfo(tickers=tickers)
-dias = len(retornos)
-fecha_dde = retornos.index[0]
-fecha_hta = retornos.index[-1]
+fechahora = datetime.now().strftime("%Y%m%d_%H%M%S")
+filename = f"precios_{fechahora}.csv"
+precios.to_csv(filename, index=True)

@@ -1,8 +1,3 @@
-Ticker
-^MERV
-IRCP.BA
-HARG.BA
-MOLI.BA
-LEDE.BA
-MIRG.BA
-CELU.BA
+Ticker;Bolsa
+^MERV;
+BMA.BA;

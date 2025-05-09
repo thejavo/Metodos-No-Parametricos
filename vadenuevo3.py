@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
 import scipy.stats as stats
-from graficos import graficar_activo, graficar_scar, graficar_ar_promedio
+import pprint
+from graficos import graficar_activo, graficar_scar, graficar_ar_promedio, graficar_MarketModel, \
+    graficar_Homocedasticidad, graficar_epsilons
+
 
 def evaluar_contraste(descripcion, valor_prueba, valor_critico, colas="2"):
     """
@@ -17,20 +20,34 @@ def evaluar_contraste(descripcion, valor_prueba, valor_critico, colas="2"):
 
 
 # --- CONFIGURACIÓN DE PARÁMETROS ---
-nombre_evento = "Estatización de Vicentin"
-fecha_evento = pd.to_datetime("2020-06-08")  # Modificable según evento
-gap_estimacion_evento = 10  # Gap entre ventana de estimación y evento
-L1 = 100  # Ventana de estimación (en días bursátiles)
 
-dias_previos = 0  # para calcular gamma
-dias_posteriores = 4  # para calcular gamma.
-L2 = dias_previos + dias_posteriores + 1  # Ventana de evento
+nombre_evento = "Estatización de Vicentin"
+fecha_evento = pd.to_datetime("2020-06-08")
+gap_estimacion_evento = 10  # Gap entre ventana de estimación y evento
+
+# Ventana de estimación (en rondas bursátiles)
+L1 = 100
 
 market_benchmark = "^GSPC"
+activo_elegido = "YPF"  #para graficar MarketModel
 
-# Configuración inicial del vector gamma
+# parametros para los tests
+nivel_confianza = 0.95
+alfa = 1 - nivel_confianza #nivel de significancia
+df_t = L1 - 2  #grados de libertad t de student
+
+n_bootstrap = 1000  # Número de iteraciones de bootstrap para test BMP
+
+# Para vector gamma
+dias_previos = indice_dia_evento = 3
+dias_posteriores = 4
 qdeunos = 3
-cerosantes = 0
+cerosantes = 3
+
+#  ------------------------ FIN PARAMETROS ------------------------
+
+# Ventana de evento
+L2 = dias_previos + dias_posteriores + 1
 cerosdesp = L2 - (qdeunos + cerosantes)
 if cerosdesp < 0:
     raise ValueError("el tamaño del vector gamma no puede ser mayor a L2")
@@ -60,7 +77,11 @@ resultados = {
     'theta_hat': {},  # Almacena alfa y beta de cada activo
     'car': {},  # Retornos acumulados anormales
     'scar': {},  # Retornos acumulados anormales estandarizados
-    'var_car': {}  # Varianza de los CAR
+    'var_car': {}, # Varianza de los CAR,
+    'SR_iE': {},  # Lista de desvios standard para BMP
+    'signos_prom': [],  # Lista para test de signos
+    'signos_dia_evento': [],  # Lista de signos el día del evento
+    'rankings': np.zeros((len(tickers), L1 + L2))  # Matriz para test de rangos
 }
 
 AR_star_matriz = np.zeros((len(tickers), L2))
@@ -68,8 +89,8 @@ AR_star_matriz = np.zeros((len(tickers), L2))
 suma_var_AR_star = np.zeros((L2, L2))
 
 # --- MODELO DE MERCADO Y CÁLCULO DE ESTADÍSTICOS ---
-i = 0 #indice para matrices auxiliares
-for ticker in tickers:
+
+for i, ticker in enumerate(tickers):
 
     if retornos.loc[fecha_inicio_estimacion:fecha_fin_estimacion, ticker].isna().any() or \
             retornos.loc[fecha_inicio_evento:fecha_fin_evento, ticker].isna().any():
@@ -92,13 +113,30 @@ for ticker in tickers:
     est_window['AR'] = est_window[ticker] - (theta_hat[0] + theta_hat[1] * est_window[market_benchmark])
     evt_window['AR'] = evt_window[ticker] - (theta_hat[0] + theta_hat[1] * evt_window[market_benchmark])
 
+    ##### --- Cálculos para el estadistico BMP ---
+    sigma_i = np.std(est_window['AR'].values, ddof=1)  # Desvío estándar en la ventana de estimación
+
+    Rm_E = evt_window[market_benchmark].iloc[indice_dia_evento]  # Retorno de mercado el día del evento
+    Rm_hat = np.mean(est_window[market_benchmark].values)  # Media de retornos de mercado en la ventana de estimación
+    suma_cuadrados_Rm = np.sum((est_window[market_benchmark].values - Rm_hat) ** 2)  # Sumatoria del denominador
+
+    # Varianza ajustada según el modelo del paper
+    var_ajustada = sigma_i * np.sqrt(1 + (1 / L1) + ((Rm_E - Rm_hat) ** 2) / suma_cuadrados_Rm)
+
+    # Residuo estandarizado del evento para el activo i
+    SR_iE = evt_window['AR'].iloc[indice_dia_evento] / var_ajustada
+
+    # Almacenar en la estructura de resultados
+    resultados.setdefault('SR_iE', {})[ticker] = SR_iE
+
+    #### --- Fin calculo BMP ---
+
     resultados.setdefault('ar', {})[ticker] = {
         'estimacion': est_window['AR'].values.tolist(),
         'evento': evt_window['AR'].values.tolist()
     }
 
     AR_star_matriz[i, :] = evt_window['AR'].values
-    i += 1
 
     # Cálculo de varianza de AR en la ventana de estimación
     e = est_window['AR'].values
@@ -123,6 +161,18 @@ for ticker in tickers:
     SCAR = CAR / np.sqrt(var_CAR)
     resultados['scar'][ticker] = SCAR
 
+    # Test de Signos
+    signos = (est_window['AR'].values > 0).astype(int)
+    resultados['signos_prom'].append(np.sum(signos) / L1)
+    signo = 1 if evt_window['AR'].values[indice_dia_evento] > 0 else 0
+    resultados['signos_dia_evento'].append(signo)
+
+    # Test de Rangos
+    resultados['rankings'][i, :] = stats.rankdata(np.concatenate((est_window['AR'].values, evt_window['AR'].values)))
+
+
+# --- TESTS PARAMETRICOS ---
+
 # --- CÁLCULO DE ESTADÍSTICOS J1 Y J2 ---
 SCAR_values = np.array(list(resultados['scar'].values()))
 
@@ -141,19 +191,39 @@ var_CAR_prom_diario = gamma.T @ var_AR_prom_diario @ gamma
 
 J1 = CAR_prom_diario / np.sqrt(var_CAR_prom_diario)
 
-print ("==== Tests PARAMETRICOS J1 y J2 ====")
+
+print ("==== Tests PARAMETRICOS ====")
+
+# --- Test BMP ajustado según Boehmer et al. (1991) ---
+SR_values = np.array(list(resultados['SR_iE'].values()))  # Obtener todos los residuos estandarizados
+
+# Estadístico BMP final
+BMP_total = np.mean(SR_values) / np.sqrt(np.sum((SR_values - np.mean(SR_values))**2) / (len(tickers) * (len(tickers) - 1)))
+
+# Contraste con la distribución t de Student
+df_bmp = len(tickers) - 1
+critico_bmp_2colas = stats.t.ppf(1 - alfa / 2, df=df_bmp)
+critico_bmp_1cola = stats.t.ppf(alfa, df=df_bmp)
+
+print("==== Test BMP ====")
+print(f"BMP = {BMP_total}")
+print(f"Valor crítico t (dos colas) = ±{critico_bmp_2colas}")
+print(f"Valor crítico t (una cola) = {critico_bmp_1cola}")
+print(evaluar_contraste("Test BMP (2 colas)", BMP_total, critico_bmp_2colas))
+print(evaluar_contraste("Test BMP (1 cola)", BMP_total, critico_bmp_1cola, "I"))
+print()
+
+
+print ("==== J1 y J2 ====")
 print (f"J1 = {J1}")
 print (f"J2 = {J2}")
 print()
 
 # --- CONTRASTE CONTRA H0 ---
 # H0: El evento no tiene impacto significativo
-nivel_confianza = 0.95
-alfa = 1 - nivel_confianza #nivel de significancia
-df = L1 - 2  #grados de libertad
 
-critico_t_2colas = stats.t.ppf(1 - alfa / 2, df=df)
-critico_t_1cola = stats.t.ppf(alfa, df=df)
+critico_t_2colas = stats.t.ppf(1 - alfa / 2, df=df_t)
+critico_t_1cola = stats.t.ppf(alfa, df=df_t)
 
 print(f"Valor crítico para t (dos colas): ±{critico_t_2colas}")
 print(f"Valor crítico para t cola izquierda: {critico_t_1cola}")
@@ -165,26 +235,17 @@ print(evaluar_contraste("J2 (dos colas)", J2, critico_t_2colas))
 print(evaluar_contraste("J2 (una cola)", J2, critico_t_1cola,"I"))
 print()
 
+
 # --- TEST NO PARAMÉTRICOS ---
+print ("====    Tests NO PARAMETRICOS    ====")
+
 # Test de Signos
-signos_prom = []
-signos_dia_evento = []
-for ticker in tickers:
-    signos = (np.array(resultados['ar'][ticker]['estimacion']) > 0).astype(int)
-    signo_prom_ticker = np.sum(signos) / L1
-    signos_prom.append(signo_prom_ticker)
-
-    AR_evento_dia = resultados['ar'][ticker]['evento'][dias_previos]  # El día del evento es el índice dias_previos
-    signo = 1 if resultados['ar'][ticker]['evento'][dias_previos] > 0 else 0
-    signos_dia_evento.append(signo)
-
-p_est = np.mean(signos_prom)
-X = np.sum(signos_dia_evento)
+p_est = np.mean(resultados['signos_prom'])
+X = np.sum(resultados['signos_dia_evento'])
 N = len(tickers)
 GS = (X - N * p_est) / np.sqrt(N*p_est*(1-p_est))
 critico_bin_1cola = stats.binom.ppf(1 - alfa, N, p_est)
 
-print ("====    Tests NO PARAMETRICOS    ====")
 print ("==== Test de signos generalizado ====")
 print (f"GS = {GS}")
 print (f"p_est = {p_est}")
@@ -192,19 +253,17 @@ print (f"Valor critico binomial cola derecha = {critico_bin_1cola}")
 print(evaluar_contraste("GS (una cola)", GS, critico_bin_1cola,"D"))
 print()
 
-
-# Test de Rangos
-rankings = np.zeros((len(tickers), L1 + L2))
-for i, ticker in enumerate(tickers):
-    rankings[i, :] = stats.rankdata(np.concatenate((resultados['ar'][ticker]['estimacion'],  resultados['ar'][ticker]['evento'])))
+# Test de Ranking
 
 rank_medio = int((L1 + L2) / 2)
-ranks_promedios_diarios = np.mean(rankings, axis=0)
-dstd_ranking = np.sqrt(np.sum((ranks_promedios_diarios - rank_medio) ** 2) / len(tickers))
+ranks_promedios_diarios = np.mean(resultados['rankings'], axis=0)
+dstd_ranking = np.sqrt(np.sum((ranks_promedios_diarios - rank_medio) ** 2) / N)
 
-ranking_prom_evt = np.mean(rankings[:, -L2:]) # tomo todas las filas y las ultimas L2 columnas de la matriz de rankings y
-                                              # al no especificar axis= en el np.mean python aplana la matriz y promedia,
-                                              # que es lo mismo que promediar por activo cada dia y luego volver a promediar.
+ranking_prom_evt = np.mean(resultados['rankings'][:, -L2:]) # tomo todas las filas y las ultimas L2 columnas de la
+                                                            # matriz de rankings y al no especificar axis= en el
+                                                            # np.mean python aplana la matriz y promedia, que es lo
+                                                            # mismo que promediar por activo cada dia y luego volver
+                                                            # a promediar.
 
 ZR = np.sqrt(L2) * (ranking_prom_evt - rank_medio) / dstd_ranking
 
@@ -222,7 +281,19 @@ print()
 
 # --- RESULTADOS ---
 print("Resultados finales:")
-print(resultados)
+pp = pprint.PrettyPrinter(indent=2)  # Indentación de 2 espacios
+pp.pprint(resultados)
+print()
+
+R_m = retornos.loc[fecha_inicio_estimacion:fecha_fin_estimacion, market_benchmark]
+R_i = retornos.loc[fecha_inicio_estimacion:fecha_fin_estimacion, activo_elegido]
+
+# Obtener coeficientes alfa y beta del activo
+alpha, beta = resultados['theta_hat'][activo_elegido]
+
+graficar_MarketModel(R_m, R_i, alpha, beta, activo_elegido)
+graficar_Homocedasticidad(R_m, R_i, alpha, beta, activo_elegido)
+graficar_epsilons(R_i - (alpha + beta * R_m), activo_elegido)
 
 graficar_ar_promedio(nombre_evento, AR_prom_diario_across_events, dias_previos, dias_posteriores)
 graficar_scar(resultados,critico_t_2colas)
